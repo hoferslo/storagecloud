@@ -7,6 +7,7 @@ This is a self-contained Docker Compose setup for a Mega-like private cloud:
 - Redis
 - Nextcloud cron
 - Cloudflare Tunnel
+- coturn for Nextcloud Talk calls
 
 It does not install Linux packages or edit host configuration. Data is stored in Docker named volumes.
 
@@ -31,6 +32,7 @@ It does not install Linux packages or edit host configuration. Data is stored in
    - `NEXTCLOUD_ADMIN_PASSWORD`
    - `POSTGRES_PASSWORD`
    - `CLOUDFLARE_TUNNEL_TOKEN`
+   - `TURN_SECRET`
 
 3. In Cloudflare Zero Trust, create a tunnel and public hostname:
 
@@ -67,6 +69,13 @@ View logs:
 docker compose logs -f
 ```
 
+Install or enable the Nextcloud Talk app:
+
+```powershell
+docker compose exec --user www-data nextcloud php occ app:install spreed
+docker compose exec --user www-data nextcloud php occ app:enable spreed
+```
+
 Stop the stack:
 
 ```powershell
@@ -93,5 +102,8 @@ Docker manages these volumes internally. They are not written into this project 
 ## Notes
 
 - Keep `.env` private. It contains passwords and your Cloudflare Tunnel token.
-- This setup exposes Nextcloud only through Cloudflare Tunnel. There is no host port mapping.
+- This setup exposes Nextcloud through Cloudflare Tunnel and locally on `http://127.0.0.1:8080` for host-only troubleshooting.
+- Nextcloud Talk media uses the `coturn` container on port `3478` TCP/UDP and UDP relay ports `49160-49200`.
+- If this runs at home and callers are outside your network, forward those TURN ports on your router to this machine.
+- In Nextcloud admin settings, configure Talk TURN with `storagecloud.download:3478`, protocol `UDP and TCP`, and the shared secret from `TURN_SECRET`.
 - For large uploads, Cloudflare plan limits may still apply even though Nextcloud allows `10G`.
