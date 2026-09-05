@@ -105,13 +105,76 @@ services:
     networks:
       - tunnel
 
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    restart: unless-stopped
+    depends_on:
+      - immich-redis
+      - immich-database
+    environment:
+      IMMICH_VERSION: ${IMMICH_VERSION:-release}
+      DB_HOSTNAME: immich-database
+      DB_USERNAME: ${IMMICH_DB_USERNAME:-postgres}
+      DB_PASSWORD: ${IMMICH_DB_PASSWORD:?Set IMMICH_DB_PASSWORD in .env}
+      DB_DATABASE_NAME: ${IMMICH_DB_DATABASE_NAME:-immich}
+      REDIS_HOSTNAME: immich-redis
+      IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+      TZ: ${TZ:-Europe/Ljubljana}
+    volumes:
+      - immich_uploads:/usr/src/app/upload
+    ports:
+      - "${IMMICH_LOCAL_BIND:-127.0.0.1}:${IMMICH_LOCAL_PORT:-2283}:2283"
+    networks:
+      - immich
+      - tunnel
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Europe/Ljubljana}
+    volumes:
+      - immich_model_cache:/cache
+    networks:
+      - immich
+
+  immich-redis:
+    image: valkey/valkey:8-bookworm
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - immich
+
+  immich-database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD:?Set IMMICH_DB_PASSWORD in .env}
+      POSTGRES_USER: ${IMMICH_DB_USERNAME:-postgres}
+      POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME:-immich}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - immich_database:/var/lib/postgresql/data
+    shm_size: 128mb
+    networks:
+      - immich
+
 volumes:
   db:
   redis:
   nextcloud:
   nextcloud_data:
+  immich_uploads:
+  immich_database:
+  immich_model_cache:
 
 networks:
   internal:
     internal: true
   tunnel:
+  immich:
+    internal: true

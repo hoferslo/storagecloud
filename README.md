@@ -8,6 +8,7 @@ This is a self-contained Docker Compose setup for a Mega-like private cloud:
 - Nextcloud cron
 - Cloudflare Tunnel
 - coturn for Nextcloud Talk calls
+- Immich photo/video backup
 
 It does not install Linux packages or edit host configuration. Data is stored in Docker named volumes.
 
@@ -33,6 +34,7 @@ It does not install Linux packages or edit host configuration. Data is stored in
    - `POSTGRES_PASSWORD`
    - `CLOUDFLARE_TUNNEL_TOKEN`
    - `TURN_SECRET`
+   - `IMMICH_DB_PASSWORD`
 
 3. In Cloudflare Zero Trust, create a tunnel and public hostname:
 
@@ -54,6 +56,29 @@ It does not install Linux packages or edit host configuration. Data is stored in
    ```text
    https://your-domain.example
    ```
+
+## Immich
+
+Immich runs next to Nextcloud using its own database and cache.
+
+Local access from this machine:
+
+```text
+http://127.0.0.1:2283
+```
+
+Cloudflare Tunnel route to add:
+
+```text
+Hostname: photos.storagecloud.download
+Service:  http://immich-server:2283
+```
+
+After adding the route in Cloudflare, open:
+
+```text
+https://photos.storagecloud.download
+```
 
 ## Useful Commands
 
@@ -96,6 +121,9 @@ The files live in Docker named volumes:
 - `storage_nextcloud_data`
 - `storage_db`
 - `storage_redis`
+- `storage_immich_uploads`
+- `storage_immich_database`
+- `storage_immich_model_cache`
 
 Docker manages these volumes internally. They are not written into this project folder.
 
@@ -107,3 +135,5 @@ Docker manages these volumes internally. They are not written into this project 
 - If this runs at home and callers are outside your network, forward those TURN ports on your router to this machine.
 - In Nextcloud admin settings, configure Talk TURN with `storagecloud.download:3478`, protocol `UDP and TCP`, and the shared secret from `TURN_SECRET`.
 - For large uploads, Cloudflare plan limits may still apply even though Nextcloud allows `10G`.
+
+For Ubuntu laptop-server notes, including desktop toggling and battery charge limits, see [LAPTOP_SERVER.md](LAPTOP_SERVER.md).
