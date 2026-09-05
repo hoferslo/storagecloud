@@ -1,3 +1,5 @@
+> Historical optional host guide. See README.md for the actual installed layout and operations. Do not reinstall the OS or switch desktop modes to use this deployment.
+
 # Laptop Server Setup
 
 This guide is for running the stack on a laptop with Ubuntu Server while keeping it suitable for 24/7 use.
@@ -67,6 +69,7 @@ Set or add:
 HandleLidSwitch=ignore
 HandleLidSwitchExternalPower=ignore
 HandleLidSwitchDocked=ignore
+IdleAction=ignore
 ```
 
 Apply it:
@@ -74,6 +77,98 @@ Apply it:
 ```bash
 sudo systemctl restart systemd-logind
 ```
+
+This host uses `/etc/systemd/logind.conf.d/60-storagecloud.conf` for those
+settings, and the system sleep targets are masked.
+
+## CPU Frequency
+
+This ASUS laptop is capped at 1.8 GHz for cooler 24/7 server operation. The
+active runtime value is:
+
+```text
+/sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq = 1800000
+```
+
+The persistent service is:
+
+```bash
+sudo systemctl status storagecloud-cpu-limit.service
+```
+
+Check the current policy with:
+
+```bash
+cpupower frequency-info
+```
+
+## Local SSH
+
+OpenSSH Server is installed and enabled for management from another computer on
+the home network.
+
+Connect with:
+
+```bash
+ssh gasper@192.168.10.10
+```
+
+The server listens on port 22, password login is enabled, public-key login is
+enabled, root login is disabled, and X11 forwarding is disabled. UFW is installed
+but inactive; a LAN-only allow rule for `192.168.10.0/24` to TCP port 22 is
+prepared if UFW is enabled later.
+
+## Local Remote Desktop
+
+GNOME Remote Desktop is enabled on the existing logged-in Wayland desktop. It
+uses RDP on port 3389, mirrors the primary display, and allows remote keyboard
+and mouse control.
+
+Connect from another home-network computer with an RDP client:
+
+```text
+192.168.10.10:3389
+```
+
+Connection details are stored privately in:
+
+```text
+/home/gasper/.local/share/storagecloud/remote-desktop.json
+```
+
+If GNOME rejects the login, open **Settings -> System -> Remote Desktop** on
+this laptop, keep Remote Desktop enabled, and set the login credentials there.
+This Ubuntu/GNOME build may require the desktop keyring/UI to save the RDP
+username and password.
+
+GDM automatic login is enabled for `gasper` in `/etc/gdm3/custom.conf`, so the
+same desktop session should come back after reboot. Do not log out for normal
+server operation; lock the screen instead. User linger is enabled for `gasper`
+so user services keep their systemd state across boot/session transitions.
+
+For reliable same-session RDP on this laptop, GNOME screen blanking, dimming,
+and locking are disabled. If the display goes black, Windows RDP can lose the
+Wayland screen-share session.
+
+```bash
+gsettings get org.gnome.desktop.session idle-delay
+gsettings get org.gnome.desktop.screensaver lock-enabled
+gsettings get org.gnome.settings-daemon.plugins.power idle-dim
+```
+
+Expected values are `uint32 0`, `false`, and `false`.
+
+When checking RDP from a VS Code snap terminal, use:
+
+```bash
+/home/gasper/storagecloud/scripts/check-rdp.sh
+```
+
+The snap environment can make plain `grdctl status --show-credentials` read the
+wrong keyring and incorrectly report null credentials. GNOME Remote Desktop does
+not have an idle logout timeout configured here. If Windows drops the session,
+the server logs usually show it as a network/client disconnect, authentication
+failure, or GNOME screen-share inhibition rather than a configured timeout.
 
 ## Battery Charge Limit
 
@@ -210,7 +305,7 @@ For a future migration, update Compose volumes like:
 
 ```yaml
 - /mnt/storage/nextcloud:/var/www/html/data
-- /mnt/storage/immich:/usr/src/app/upload
+- /mnt/storage/immich:/data
 ```
 
 Back up before changing storage paths.

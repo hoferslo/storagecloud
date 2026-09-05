@@ -7,31 +7,53 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-nextcloud}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
-      - db:/var/lib/postgresql/data
+    - /srv/storagecloud/databases/nextcloud:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
       interval: 10s
       timeout: 5s
       retries: 10
     networks:
-      - internal
-
+    - internal
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 1g
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis:/data
+    command:
+    - redis-server
+    - --maxmemory
+    - 256mb
+    - --maxmemory-policy
+    - noeviction
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+      - CMD
+      - redis-cli
+      - ping
       interval: 10s
       timeout: 5s
       retries: 10
     networks:
-      - internal
-
+    - internal
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 384m
   nextcloud:
-    image: nextcloud:stable-apache
+    image: nextcloud:34.0.3-apache
     restart: unless-stopped
     depends_on:
       db:
@@ -45,72 +67,109 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       REDIS_HOST: redis
       NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER:?Set NEXTCLOUD_ADMIN_USER in .env}
-      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD:?Set NEXTCLOUD_ADMIN_PASSWORD in .env}
-      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_DOMAIN:?Set NEXTCLOUD_DOMAIN in .env} 127.0.0.1 localhost
-      TRUSTED_PROXIES: 172.16.0.0/12
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD:?Set NEXTCLOUD_ADMIN_PASSWORD
+        in .env}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_DOMAIN:?Set NEXTCLOUD_DOMAIN in .env}
+        127.0.0.1 localhost
+      TRUSTED_PROXIES: 172.30.80.4
       PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1024M}
       PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-10G}
       APACHE_DISABLE_REWRITE_IP: 1
+      OVERWRITEPROTOCOL: https
+      OVERWRITECLIURL: https://${NEXTCLOUD_DOMAIN}
+      TZ: Europe/Ljubljana
     ports:
-      - "${NEXTCLOUD_LOCAL_BIND:-127.0.0.1}:${NEXTCLOUD_LOCAL_PORT:-8080}:80"
+    - ${NEXTCLOUD_LOCAL_BIND:-127.0.0.1}:${NEXTCLOUD_LOCAL_PORT:-8080}:80
     volumes:
-      - nextcloud:/var/www/html
-      - nextcloud_data:/var/www/html/data
+    - /srv/storagecloud/nextcloud/app:/var/www/html
+    - /srv/storagecloud/nextcloud/data:/var/www/html/data
+    - ./config/apache.conf:/etc/apache2/conf-enabled/storagecloud.conf:ro
+    - ./config/php.ini:/usr/local/etc/php/conf.d/zz-storagecloud.ini:ro
     networks:
-      - internal
-      - tunnel
-
+      internal: null
+      tunnel:
+        ipv4_address: 172.30.80.2
+        aliases:
+        - nextcloud-backend
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 3g
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -fsS
+      - http://localhost/status.php
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
   cron:
-    image: nextcloud:stable-apache
+    image: nextcloud:34.0.3-apache
     restart: unless-stopped
     depends_on:
-      - nextcloud
+      nextcloud:
+        condition: service_healthy
     entrypoint: /cron.sh
     volumes:
-      - nextcloud:/var/www/html
-      - nextcloud_data:/var/www/html/data
+    - /srv/storagecloud/nextcloud/app:/var/www/html
+    - /srv/storagecloud/nextcloud/data:/var/www/html/data
+    - ./config/php.ini:/usr/local/etc/php/conf.d/zz-storagecloud.ini:ro
     networks:
-      - internal
-
+    - internal
+    - tunnel
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 1g
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-nextcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-nextcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      REDIS_HOST: redis
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1024M}
+      TZ: Europe/Ljubljana
   cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
-    depends_on:
-      - nextcloud
-    networks:
-      - tunnel
-
-  coturn:
-    image: coturn/coturn:latest
+    image: cloudflare/cloudflared:2026.8.3
     restart: unless-stopped
     command:
-      - --listening-port=3478
-      - --fingerprint
-      - --use-auth-secret
-      - --static-auth-secret=${TURN_SECRET:?Set TURN_SECRET in .env}
-      - --realm=${TURN_REALM:-storagecloud.download}
-      - --total-quota=100
-      - --bps-capacity=0
-      - --stale-nonce=600
-      - --no-cli
-      - --no-tls
-      - --no-dtls
-      - --log-file=stdout
-      - --external-ip=${TURN_EXTERNAL_IP:-auto}
-    ports:
-      - "${TURN_BIND:-0.0.0.0}:3478:3478/tcp"
-      - "${TURN_BIND:-0.0.0.0}:3478:3478/udp"
-      - "${TURN_BIND:-0.0.0.0}:49160-49200:49160-49200/udp"
+    - tunnel
+    - --no-autoupdate
+    - run
+    depends_on:
+      lan-proxy:
+        condition: service_started
     networks:
-      - tunnel
-
+      frontend:
+        ipv4_address: 172.30.81.3
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set tunnel token}
+    mem_limit: 256m
   immich-server:
     image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
     restart: unless-stopped
     depends_on:
-      - immich-redis
-      - immich-database
+      immich-redis:
+        condition: service_healthy
+      immich-database:
+        condition: service_healthy
     environment:
       IMMICH_VERSION: ${IMMICH_VERSION:-release}
       DB_HOSTNAME: immich-database
@@ -121,60 +180,168 @@ services:
       IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
       TZ: ${TZ:-Europe/Ljubljana}
     volumes:
-      - immich_uploads:/usr/src/app/upload
+    - ${IMMICH_UPLOAD_LOCATION}:/data
+    - /etc/localtime:/etc/localtime:ro
     ports:
-      - "${IMMICH_LOCAL_BIND:-127.0.0.1}:${IMMICH_LOCAL_PORT:-2283}:2283"
+    - ${IMMICH_LOCAL_BIND:-127.0.0.1}:${IMMICH_LOCAL_PORT:-2283}:2283
     networks:
-      - immich
-      - tunnel
-
+      immich: null
+      tunnel:
+        aliases:
+        - immich-backend
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    devices:
+    - /dev/dri:/dev/dri
+    mem_limit: 4g
+    cpus: 4
+    healthcheck:
+      disable: false
   immich-machine-learning:
     image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
     restart: unless-stopped
     environment:
       TZ: ${TZ:-Europe/Ljubljana}
+      MACHINE_LEARNING_MODEL_TTL: '300'
+      MACHINE_LEARNING_REQUEST_THREADS: '2'
     volumes:
-      - immich_model_cache:/cache
+    - immich_model_cache:/cache
     networks:
-      - immich
-
+    - immich
+    - ml-egress
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 3g
+    cpus: 2
+    healthcheck:
+      disable: false
   immich-redis:
-    image: valkey/valkey:8-bookworm
+    image: docker.io/valkey/valkey:9@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test:
+      - CMD
+      - valkey-cli
+      - ping
       interval: 10s
       timeout: 5s
       retries: 10
     networks:
-      - immich
-
+    - immich
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 512m
   immich-database:
-    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD:?Set IMMICH_DB_PASSWORD in .env}
       POSTGRES_USER: ${IMMICH_DB_USERNAME:-postgres}
       POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME:-immich}
-      POSTGRES_INITDB_ARGS: '--data-checksums'
+      POSTGRES_INITDB_ARGS: --data-checksums
     volumes:
-      - immich_database:/var/lib/postgresql/data
+    - /srv/storagecloud/databases/immich:/var/lib/postgresql/data
     shm_size: 128mb
     networks:
-      - immich
-
+    - immich
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      disable: false
+    mem_limit: 2g
+  lan-proxy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      NEXTCLOUD_DOMAIN: ${NEXTCLOUD_DOMAIN}
+      IMMICH_DOMAIN: ${IMMICH_DOMAIN}
+    ports:
+    - ${LAN_IP:?Set LAN_IP}:443:443/tcp
+    volumes:
+    - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+    - /srv/storagecloud/caddy/data:/data
+    - /srv/storagecloud/caddy/config:/config
+    networks:
+      tunnel:
+        ipv4_address: 172.30.80.4
+      frontend:
+        ipv4_address: 172.30.81.2
+        aliases:
+        - nextcloud
+        - immich-server
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+      immich-server:
+        condition: service_healthy
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 256m
+  lan-dns:
+    image: coredns/coredns:1.14.7
+    restart: unless-stopped
+    command:
+    - -conf
+    - /etc/coredns/Corefile
+    environment:
+      LAN_IP: ${LAN_IP}
+    ports:
+    - ${LAN_IP}:53:53/udp
+    - ${LAN_IP}:53:53/tcp
+    volumes:
+    - ./config/Corefile:/etc/coredns/Corefile:ro
+    networks:
+    - dns-egress
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 64m
 volumes:
-  db:
-  redis:
-  nextcloud:
-  nextcloud_data:
-  immich_uploads:
-  immich_database:
-  immich_model_cache:
-
+  immich_model_cache: null
 networks:
   internal:
     internal: true
-  tunnel:
   immich:
     internal: true
+  tunnel:
+    ipam:
+      config:
+      - subnet: 172.30.80.0/24
+        ip_range: 172.30.80.128/25
+  ml-egress: null
+  frontend:
+    ipam:
+      config:
+      - subnet: 172.30.81.0/24
+        ip_range: 172.30.81.128/25
+  dns-egress: null
+name: storagecloud

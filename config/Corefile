@@ -1,0 +1,29 @@
+# These zones never fall through to public DNS, including AAAA and HTTPS queries.
+cloud.storagecloud.download:53 photos.storagecloud.download:53 {
+    errors
+    template IN A {
+        answer "{{ .Name }} 60 IN A {$LAN_IP}"
+    }
+    template IN ANY {
+        rcode NOERROR
+    }
+    cache 60
+}
+
+cudy.net:53 {
+    errors
+    template IN A {
+        answer "{{ .Name }} 60 IN A 192.168.10.1"
+    }
+    template IN ANY {
+        rcode NOERROR
+    }
+    cache 60
+}
+
+.:53 {
+    errors
+    loop
+    cache 300
+    forward . 1.1.1.1 9.9.9.9
+}

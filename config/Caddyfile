@@ -1,0 +1,45 @@
+{
+	email admin@gmail.com
+	auto_https disable_redirects
+	servers {
+		trusted_proxies static 172.30.81.3/32
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+# HTTP origins remain reachable only on Docker networks. The tunnel uses these
+# listeners for public requests and certificate HTTP-01 validation.
+http://{$NEXTCLOUD_DOMAIN} {
+	reverse_proxy nextcloud-backend:80
+}
+http://{$IMMICH_DOMAIN} {
+	reverse_proxy immich-backend:2283
+}
+
+# Preserve the remotely managed tunnel's existing Immich destination port.
+http://:2283 {
+	handle /.well-known/acme-challenge/* {
+		reverse_proxy 127.0.0.1:80
+	}
+	handle {
+		reverse_proxy immich-backend:2283
+	}
+}
+
+https://{$NEXTCLOUD_DOMAIN} {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+	reverse_proxy nextcloud-backend:80
+}
+https://{$IMMICH_DOMAIN} {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+	reverse_proxy immich-backend:2283
+}
